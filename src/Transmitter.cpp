@@ -85,7 +85,10 @@ auto LibFlute::Transmitter::send_fdt() -> void {
         fdt.length(),
         true);
   file->set_fdt_instance_id( _fdt->instance_id() );
-  _files.insert_or_assign(0, file);
+  {
+    const std::lock_guard<std::mutex> lock(_files_mutex);
+    _files.insert_or_assign(0, file);
+  }
 }
 
 auto LibFlute::Transmitter::send(
@@ -110,7 +113,10 @@ auto LibFlute::Transmitter::send(
 
   _fdt->add(file->meta());
   send_fdt();
+
+  const std::lock_guard<std::mutex> lock(_files_mutex);
   _files.insert({toi, file});
+
   return toi;
 }
 
@@ -124,7 +130,10 @@ auto LibFlute::Transmitter::fdt_send_tick() -> void
 auto LibFlute::Transmitter::file_transmitted(uint32_t toi) -> void
 {
   if (toi != 0) {
-    _files.erase(toi);
+    {
+      const std::lock_guard<std::mutex> lock(_files_mutex);
+      _files.erase(toi);
+    }
     _fdt->remove(toi);
     send_fdt();
 
@@ -138,40 +147,43 @@ auto LibFlute::Transmitter::send_next_packet() -> void
 {
   uint32_t bytes_queued = 0;
 
-  if (_files.size()) {
-    for (auto& file_m : _files) {
-      auto file = file_m.second;
+  {
+    const std::lock_guard<std::mutex> lock(_files_mutex);
+    if (_files.size()) {
+      for (auto& file_m : _files) {
+        auto file = file_m.second;
 
-      if (file && !file->complete()) {
-        auto symbols = file->get_next_symbols(_max_payload);
+        if (file && !file->complete()) {
+          auto symbols = file->get_next_symbols(_max_payload);
 
-        if (symbols.size()) {
-          for(const auto& symbol : symbols) {
-            spdlog::debug("sending TOI {} SBN {} ID {}", file->meta().toi, symbol.source_block_number(), symbol.id() );
-          }
-          auto packet = std::make_shared<AlcPacket>(_tsi, file->meta().toi, file->meta().fec_oti, symbols, _max_payload, file->fdt_instance_id());
-          bytes_queued += packet->size();
+          if (symbols.size()) {
+            for(const auto& symbol : symbols) {
+              spdlog::debug("sending TOI {} SBN {} ID {}", file->meta().toi, symbol.source_block_number(), symbol.id() );
+            }
+            auto packet = std::make_shared<AlcPacket>(_tsi, file->meta().toi, file->meta().fec_oti, symbols, _max_payload, file->fdt_instance_id());
+            bytes_queued += packet->size();
 
-          _socket.async_send_to(
-              boost::asio::buffer(packet->data(), packet->size()), _endpoint,
-              [file, symbols, packet, this](
-                const boost::system::error_code& error,
-                std::size_t bytes_transferred)
-              {
+            _socket.async_send_to(
+                boost::asio::buffer(packet->data(), packet->size()), _endpoint,
+                [file, symbols, packet, this](
+                  const boost::system::error_code& error,
+                  std::size_t bytes_transferred)
+                {
                 if (error) {
-                  spdlog::debug("sent_to error: {}", error.message());
+                spdlog::debug("sent_to error: {}", error.message());
                 } else {
-                  file->mark_completed(symbols, !error);
-                  if (file->complete()) {
-                    file_transmitted(file->meta().toi);
-                  }
+                file->mark_completed(symbols, !error);
+                if (file->complete()) {
+                file_transmitted(file->meta().toi);
                 }
-              });
-        } 
-        break;
+                }
+                });
+          } 
+          break;
+        }
       }
-    }
-  } 
+    } 
+  }
   if (!bytes_queued) {
     _send_timer.expires_from_now(boost::posix_time::milliseconds(10));
     _send_timer.async_wait( boost::bind(&Transmitter::send_next_packet, this));
