@@ -24,8 +24,8 @@
 LibFlute::Transmitter::Transmitter ( const std::string& address,
     short port, uint64_t tsi, unsigned short mtu, uint32_t rate_limit,
     boost::asio::io_service& io_service)
-    : _endpoint(boost::asio::ip::address::from_string(address), port)
-    , _socket(io_service, _endpoint.protocol())
+    : _endpoint(boost::asio::ip::address::from_string(address),to_v4(), port)
+    , _socket(io_service)
     , _fdt_timer(io_service)
     , _send_timer(io_service)
     , _io_service(io_service)
@@ -41,8 +41,11 @@ LibFlute::Transmitter::Transmitter ( const std::string& address,
      4;  // SBN and ESI for compact no-code FEC
   uint32_t max_source_block_length = 64;
 
+  _socket.open(_endpoint.protocol());
   _socket.set_option(boost::asio::ip::multicast::enable_loopback(true));
   _socket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
+  _socket.set_option(boost::asio::ip::multicast::hops(8));
+  _socket.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), port));
 
   _fec_oti = FecOti{FecScheme::CompactNoCode, 0, _max_payload, max_source_block_length};
   _fdt = std::make_unique<FileDeliveryTable>(1, _fec_oti);
