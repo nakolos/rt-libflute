@@ -24,7 +24,7 @@
 LibFlute::Transmitter::Transmitter ( const std::string& address,
     short port, uint64_t tsi, unsigned short mtu, uint32_t rate_limit,
     boost::asio::io_service& io_service)
-    : _endpoint(boost::asio::ip::address::from_string(address),to_v4(), port)
+    : _endpoint(boost::asio::ip::address::from_string(address).to_v4(), port)
     , _socket(io_service)
     , _fdt_timer(io_service)
     , _send_timer(io_service)
